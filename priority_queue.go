@@ -2,13 +2,10 @@
 package main
 
 import (
-	"sync"
-
 	"golang.org/x/exp/constraints"
 )
 
 type PriorityQueue[T any, P constraints.Ordered] struct {
-	sync.RWMutex
 	items      []*priorityQueueItem[T, P]
 	itemCount  uint
 	comparator func(lhs, rhs P) bool
@@ -44,16 +41,12 @@ func Minimum[T constraints.Ordered](lhs, rhs T) bool {
 func (pq *PriorityQueue[T, P]) Push(value T, priority P) {
 	item := newPriorityQueueItem(value, priority)
 
-	pq.Lock()
-	defer pq.Unlock()
 	pq.items = append(pq.items, item)
 	pq.itemCount++
 	pq.swim(pq.size())
 }
 
 func (pq *PriorityQueue[T, P]) Pop() (value T, priority P, ok bool) {
-	pq.Lock()
-	defer pq.Unlock()
 
 	if pq.size() < 1 {
 		ok = false
@@ -74,8 +67,6 @@ func (pq *PriorityQueue[T, P]) Pop() (value T, priority P, ok bool) {
 }
 
 func (pq *PriorityQueue[T, P]) Head() (value T, priority P, ok bool) {
-	pq.RLock()
-	defer pq.RUnlock()
 
 	if pq.size() < 1 {
 		ok = false
@@ -90,14 +81,10 @@ func (pq *PriorityQueue[T, P]) Head() (value T, priority P, ok bool) {
 }
 
 func (pq *PriorityQueue[T, P]) Size() uint {
-	pq.RLock()
-	defer pq.RUnlock()
 	return pq.size()
 }
 
 func (pq *PriorityQueue[T, P]) Empty() bool {
-	pq.RLock()
-	defer pq.RUnlock()
 	return pq.size() == 0
 }
 
