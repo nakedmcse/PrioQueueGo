@@ -1,88 +1,150 @@
+// taken from https://github.com/oleiade/lane/blob/master/priority_queue.go as I can't go get for some reason
 package main
 
 import (
-	"container/heap"
-	"fmt"
-	"math/rand"
-	"time"
+	"sync"
+
+	"golang.org/x/exp/constraints"
 )
 
-type PriorityQueue []*Pair
-
-func (piq PriorityQueue) Len() int {
-	return len(piq)
+type PriorityQueue[T any, P constraints.Ordered] struct {
+	sync.RWMutex
+	items      []*priorityQueueItem[T, P]
+	itemCount  uint
+	comparator func(lhs, rhs P) bool
 }
 
-func (piq PriorityQueue) Less(i, j int) bool {
-	return piq[i].priority > piq[j].priority
+func NewPriorityQueue[T any, P constraints.Ordered](heuristic func(lhs, rhs P) bool) *PriorityQueue[T, P] {
+	items := make([]*priorityQueueItem[T, P], 1)
+	items[0] = nil
+
+	return &PriorityQueue[T, P]{
+		items:      items,
+		itemCount:  0,
+		comparator: heuristic,
+	}
 }
 
-func (piq PriorityQueue) Swap(i, j int) {
-	piq[i], piq[j] = piq[j], piq[i]
-	piq[i].index = i
-	piq[j].index = j
+func NewMaxPriorityQueue[T any, P constraints.Ordered]() *PriorityQueue[T, P] {
+	return NewPriorityQueue[T](Maximum[P])
 }
 
-func (piq *PriorityQueue) Push(x interface{}) {
-	n := len(*piq)
-	item := x.(*Pair)
-	item.index = n
-	*piq = append(*piq, item)
+func NewMinPriorityQueue[T any, P constraints.Ordered]() *PriorityQueue[T, P] {
+	return NewPriorityQueue[T](Minimum[P])
 }
 
-func (piq *PriorityQueue) Pop() interface{} {
-	old := *piq
-	n := len(old)
-	item := old[n-1]
-	old[n-1] = nil
-	item.index = -1
-	*piq = old[0 : n-1]
-	return item
+func Maximum[T constraints.Ordered](lhs, rhs T) bool {
+	return lhs < rhs
 }
 
-func main() {
-	pq := make(PriorityQueue, 5)
+func Minimum[T constraints.Ordered](lhs, rhs T) bool {
+	return lhs > rhs
+}
 
-	pq[0] = &Pair{val: 1, priority: 1, index: 0}
-	pq[1] = &Pair{val: 2, priority: 1, index: 1}
-	pq[2] = &Pair{val: 3, priority: 1, index: 2}
-	pq[3] = &Pair{val: 4, priority: 5, index: 3}
-	pq[4] = &Pair{val: 5, priority: 9, index: 4}
+func (pq *PriorityQueue[T, P]) Push(value T, priority P) {
+	item := newPriorityQueueItem(value, priority)
 
-	heap.Init(&pq)
+	pq.Lock()
+	defer pq.Unlock()
+	pq.items = append(pq.items, item)
+	pq.itemCount++
+	pq.swim(pq.size())
+}
 
-	fmt.Println("PriorityQueue Enqueued: 1:1, 2:1, 3:1, 4:5, 5:9")
-	fmt.Print("PriorityQueue Dequeued:")
+func (pq *PriorityQueue[T, P]) Pop() (value T, priority P, ok bool) {
+	pq.Lock()
+	defer pq.Unlock()
 
-	for pq.Len() > 0 {
-		item := heap.Pop(&pq).(*Pair)
-		fmt.Printf(" %d:%d;", item.val, item.priority)
+	if pq.size() < 1 {
+		ok = false
+		return
 	}
 
-	pairs := make([]*Pair, RangeInt)
-	for i := range pairs {
-		pairs[i] = &Pair{
-			val:      rand.Intn(RangeInt),
-			priority: rand.Intn(9) + 1,
+	max := pq.items[1]
+	pq.exch(1, pq.size())
+	pq.items = pq.items[0:pq.size()]
+	pq.itemCount--
+	pq.sink(1)
+
+	value = max.value
+	priority = max.priority
+	ok = true
+
+	return
+}
+
+func (pq *PriorityQueue[T, P]) Head() (value T, priority P, ok bool) {
+	pq.RLock()
+	defer pq.RUnlock()
+
+	if pq.size() < 1 {
+		ok = false
+		return
+	}
+
+	value = pq.items[1].value
+	priority = pq.items[1].priority
+	ok = true
+
+	return
+}
+
+func (pq *PriorityQueue[T, P]) Size() uint {
+	pq.RLock()
+	defer pq.RUnlock()
+	return pq.size()
+}
+
+func (pq *PriorityQueue[T, P]) Empty() bool {
+	pq.RLock()
+	defer pq.RUnlock()
+	return pq.size() == 0
+}
+
+func (pq *PriorityQueue[T, P]) swim(k uint) {
+	for k > 1 && pq.less(k/2, k) {
+		pq.exch(k/2, k)
+		k /= 2
+	}
+}
+
+func (pq *PriorityQueue[T, P]) sink(k uint) {
+	for 2*k <= pq.size() {
+		j := 2 * k
+
+		if j < pq.size() && pq.less(j, j+1) {
+			j++
 		}
-	}
 
-	start := time.Now()
-	for _, pair := range pairs {
-		heap.Push(&pq, pair)
-	}
-	duration := time.Since(start)
-	fmt.Printf("\nPriorityQueue enqueue time: %s\n", duration)
+		if !pq.less(k, j) {
+			break
+		}
 
-	count := 0
-	start = time.Now()
-	for pq.Len() > 0 {
-		heap.Pop(&pq)
-		count++
+		pq.exch(k, j)
+		k = j
 	}
-	duration = time.Since(start)
+}
 
-	fmt.Printf("PriorityQueue dequeued items: %d\n", count)
-	fmt.Printf("PriorityQueue dequeue time: %s\n", duration)
-	fmt.Println("-----")
+func (pq *PriorityQueue[T, P]) size() uint {
+	return pq.itemCount
+}
+
+func (pq *PriorityQueue[T, P]) less(lhs, rhs uint) bool {
+	return pq.comparator(pq.items[lhs].priority, pq.items[rhs].priority)
+}
+
+func (pq *PriorityQueue[T, P]) exch(lhs, rhs uint) {
+	pq.items[lhs], pq.items[rhs] = pq.items[rhs], pq.items[lhs]
+}
+
+type priorityQueueItem[T any, P constraints.Ordered] struct {
+	value    T
+	priority P
+}
+
+func newPriorityQueueItem[T any, P constraints.Ordered](value T, priority P) *priorityQueueItem[T, P] {
+	return &priorityQueueItem[T, P]{
+		value:    value,
+		priority: priority,
+	}
 }
